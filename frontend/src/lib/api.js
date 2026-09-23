@@ -4,8 +4,10 @@ if (!process.env.REACT_APP_BACKEND_URL) throw new Error('REACT_APP_BACKEND_URL i
 export const api = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api`, withCredentials: true });
 
 export const currency = value => `₹${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const price = value => Number(value || 0) % 1 === 0 ? `₹${Number(value || 0).toLocaleString('en-IN')}` : currency(value);
 export const dateTime = value => value ? new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }).format(new Date(value)) : '—';
 export const dateOnly = value => value ? new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeZone: 'Asia/Kolkata' }).format(new Date(value)) : '—';
+export const dmy = value => value ? new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata' }).format(new Date(value)) : '—';
 export const errorText = error => error?.response?.data?.detail || (navigator.onLine ? 'Something went wrong. Please try again.' : 'You are offline. Your work will be saved here.');
 
 export async function downloadPdf(path, filename, print = false) {

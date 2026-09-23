@@ -41,6 +41,7 @@ class SaleInput(BaseModel):
     overallDiscountType: str | None = None
     overallDiscountValue: float = Field(default=0, ge=0)
     notes: str = ""
+    includeGst: bool = False
     idempotencyKey: str | None = None
     sourceQuotationId: str | None = None
 
@@ -57,11 +58,12 @@ class QuoteInput(BaseModel):
     terms: str = "Prices subject to stock availability. Transportation charges extra."
     notes: str = ""
     status: str = "draft"
+    includeGst: bool = False
     overallDiscountType: str | None = None
     overallDiscountValue: float = Field(default=0, ge=0)
 
 
-async def calculated_lines(items, state_code="27", overall_type=None, overall_value=0):
+async def calculated_lines(items, state_code="27", overall_type=None, overall_value=0, include_gst=True):
     product_ids = list({line.productId for line in items if line.productId})
     products = {p["id"]: p for p in await db.products.find({"id": {"$in": product_ids}}, {"_id": 0}).to_list(1000)}
     built = []
@@ -103,7 +105,7 @@ async def calculated_lines(items, state_code="27", overall_type=None, overall_va
         allocation = min(remaining, money(overall_discount * line_after_discount / before_bill_discount)) if before_bill_discount and index < len(built) - 1 else remaining
         remaining -= allocation
         taxable = money(line_after_discount - allocation)
-        rate = money(item["gstRate"])
+        rate = money(item["gstRate"]) if include_gst else Decimal("0")
         cgst = money(taxable * rate / 200) if state_code == "27" else Decimal("0")
         sgst = money(taxable * rate / 200) if state_code == "27" else Decimal("0")
         igst = money(taxable * rate / 100) if state_code != "27" else Decimal("0")
@@ -137,7 +139,7 @@ async def persist_bill(payload: SaleInput):
     state_code = gstin[:2] if len(gstin) >= 2 and gstin[:2].isdigit() else payload.stateCode
     if not state_code.isdigit() or len(state_code) != 2:
         raise HTTPException(400, "State code must have two digits")
-    items, totals = await calculated_lines(payload.items, state_code, payload.overallDiscountType, payload.overallDiscountValue)
+    items, totals = await calculated_lines(payload.items, state_code, payload.overallDiscountType, payload.overallDiscountValue, payload.includeGst)
     total = totals["grandTotal"]
     received = money(payload.amountReceived if payload.amountReceived is not None else 0 if payload.paymentMode in ("Credit", "Mixed") else total)
     if payload.paymentMode in ("Credit", "Mixed") and not customer:
@@ -161,6 +163,7 @@ async def persist_bill(payload: SaleInput):
            "dueAmount": float(due), "upiTransactionId": payload.upiTransactionId,
            "overallDiscountType": payload.overallDiscountType, "overallDiscountValue": payload.overallDiscountValue,
            "notes": payload.notes, "status": "completed", "items": items, "sourceQuotationId": payload.sourceQuotationId,
+           "includeGst": payload.includeGst, "documentType": "TAX INVOICE" if payload.includeGst else "ESTIMATE / CASH MEMO",
            "idempotencyKey": payload.idempotencyKey, **totals}
     await db.bills.insert_one(dict(doc))
     for item in items:
@@ -266,7 +269,7 @@ async def list_quotes(q: str = "", status: str = "", user=Depends(require_admin)
 async def create_quote(payload: QuoteInput, user=Depends(require_admin)):
     if payload.customerId and not await db.customers.find_one({"id": payload.customerId}):
         raise HTTPException(400, "Customer not found")
-    items, totals = await calculated_lines(payload.items, payload.stateCode, payload.overallDiscountType, payload.overallDiscountValue)
+    items, totals = await calculated_lines(payload.items, payload.stateCode, payload.overallDiscountType, payload.overallDiscountValue, payload.includeGst)
     if payload.status not in ("draft", "sent", "accepted", "rejected"):
         raise HTTPException(400, "Invalid quotation status")
     document = {"id": uid(), "number": await next_number("quote"), "date": now(),
@@ -275,7 +278,7 @@ async def create_quote(payload: QuoteInput, user=Depends(require_admin)):
                 "customerName": payload.customerName.strip(), "customerPhone": payload.customerPhone,
                 "customerAddress": payload.customerAddress, "customerGstin": payload.customerGstin,
                 "stateCode": payload.stateCode, "terms": payload.terms, "notes": payload.notes,
-                "status": payload.status, "convertedBillId": None, "items": items,
+                "status": payload.status, "convertedBillId": None, "items": items, "includeGst": payload.includeGst,
                 "overallDiscountType": payload.overallDiscountType, "overallDiscountValue": payload.overallDiscountValue, **totals}
     await db.quotations.insert_one(dict(document))
     return document
@@ -296,14 +299,14 @@ async def update_quote(quote_id: str, payload: dict, user=Depends(require_admin)
         raise HTTPException(404, "Quotation not found")
     if doc["status"] == "converted":
         raise HTTPException(400, "Converted quotations cannot be edited")
-    allowed = {k: v for k, v in payload.items() if k in {"customerName", "customerPhone", "customerAddress", "customerGstin", "customerId", "terms", "notes", "status", "validityDays", "items", "overallDiscountType", "overallDiscountValue", "stateCode"}}
+    allowed = {k: v for k, v in payload.items() if k in {"customerName", "customerPhone", "customerAddress", "customerGstin", "customerId", "terms", "notes", "status", "validityDays", "items", "overallDiscountType", "overallDiscountValue", "stateCode", "includeGst"}}
     if allowed.get("status") not in (None, "draft", "sent", "accepted", "rejected", "expired"):
         raise HTTPException(400, "Invalid quotation status")
     if "validityDays" in allowed:
         allowed["validUntil"] = (datetime.fromisoformat(doc["date"]) + timedelta(days=int(allowed["validityDays"]))).isoformat()
-    if "items" in allowed or "overallDiscountValue" in allowed:
+    if "items" in allowed or "overallDiscountValue" in allowed or "includeGst" in allowed:
         lines = [LineInput(**{**line, "name": line.get("name") or line.get("productName")}) for line in allowed.get("items", doc["items"])]
-        items, totals = await calculated_lines(lines, allowed.get("stateCode", doc.get("stateCode", "27")), allowed.get("overallDiscountType", doc.get("overallDiscountType")), allowed.get("overallDiscountValue", doc.get("overallDiscountValue", 0)))
+        items, totals = await calculated_lines(lines, allowed.get("stateCode", doc.get("stateCode", "27")), allowed.get("overallDiscountType", doc.get("overallDiscountType")), allowed.get("overallDiscountValue", doc.get("overallDiscountValue", 0)), bool(allowed.get("includeGst", doc.get("includeGst", True))))
         allowed.update({"items": items, **totals})
     allowed["updatedAt"] = now()
     return await db.quotations.find_one_and_update({"id": quote_id}, {"$set": allowed}, return_document=ReturnDocument.AFTER, projection={"_id": 0})
@@ -326,6 +329,7 @@ async def convert_quote(quote_id: str, payload: dict, user=Depends(require_admin
                                        customerGstin=quote.get("customerGstin", ""), stateCode=quote.get("stateCode", "27"),
                                        overallDiscountType=quote.get("overallDiscountType"), overallDiscountValue=quote.get("overallDiscountValue", 0),
                                        paymentMode=payload.get("paymentMode", "Cash"), amountReceived=payload.get("amountReceived"),
+                                       includeGst=bool(quote.get("includeGst", True)),
                                        sourceQuotationId=quote_id, idempotencyKey=f"quote-{quote_id}"))
     await db.quotations.update_one({"id": quote_id}, {"$set": {"status": "converted", "convertedBillId": bill["id"], "updatedAt": now()}})
     return bill
