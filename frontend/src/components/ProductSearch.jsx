@@ -1,0 +1,15 @@
+import React, { useMemo, useRef, useState } from 'react';
+import { Plus, Search, CornerDownLeft, PackageX } from 'lucide-react';
+import { filterProducts } from '../lib/billing';
+import { currency } from '../lib/api';
+import { Input } from './ui/input';
+import { Button } from './ui/button';
+
+export const ProductSearch = ({ products = [], onAdd, recent = [], searchRef, title = 'Find a product' }) => {
+  const [query, setQuery] = useState(''); const [selected, setSelected] = useState(0);
+  const localRef = useRef(null); const ref = searchRef || localRef;
+  const results = useMemo(() => filterProducts(products, query), [products, query]);
+  const add = product => { onAdd(product); setQuery(''); setSelected(0); ref.current?.focus(); };
+  const keyDown = event => { if (event.key === 'ArrowDown') { event.preventDefault(); setSelected(i => Math.min(results.length - 1, i + 1)); } if (event.key === 'ArrowUp') { event.preventDefault(); setSelected(i => Math.max(0, i - 1)); } if (event.key === 'Enter' && results[selected]) { event.preventDefault(); add(results[selected]); } if (event.key === 'Escape') { setQuery(''); setSelected(0); } };
+  return <div className="product-search-panel"><div className="panel-label"><span>01 / CATALOGUE</span><span className="product-count" data-testid="product-search-count">{products.length} PRODUCTS</span></div><h2>{title}</h2><p>Search by name, SKU or barcode.</p><div className="search-field"><Search size={20}/><Input ref={ref} autoFocus value={query} onChange={e => { setQuery(e.target.value); setSelected(0); }} onKeyDown={keyDown} placeholder="Search products..." data-testid="product-search-input"/><kbd>F2</kbd></div><div className="search-results-heading"><span>{query ? `RESULTS FOR “${query}”` : 'QUICK PICK'}</span><span>{results.length} FOUND</span></div><div className="search-results" data-testid="product-search-results">{results.length ? results.map((p, index) => <button type="button" key={p.id} className={`search-result ${selected === index ? 'selected' : ''}`} onClick={() => add(p)} data-testid={`product-result-${p.sku || p.id}`}><span className="result-symbol"><Plus size={17}/></span><span className="result-info"><strong>{p.name}</strong><small>{p.category} <i/> {p.sku}</small></span><span className="result-side"><strong>{currency(p.salePrice)}</strong><small className={p.stockCounted ? (p.currentStock > 0 ? 'stock-in' : 'stock-out') : 'stock-unknown'}>{p.stockCounted ? (p.currentStock > 0 ? `${p.currentStock} in stock` : 'Out of stock') : 'Count pending'}</small></span></button>) : <div className="empty-search"><PackageX size={29}/><strong>No matching products</strong><span>Try a different name or code.</span></div>}</div>{recent.length > 0 && <div className="recent-products"><div className="search-results-heading"><span>RECENTLY ADDED</span></div><div>{recent.slice(0, 5).map((p, i) => <button type="button" data-testid={`recent-product-${i}`} key={`${p.id}-${i}`} onClick={() => add(p)}><Plus size={14}/>{p.name}</button>)}</div></div>}<p className="keyboard-hint"><CornerDownLeft size={13}/> Use ↑ ↓ and Enter for faster billing</p></div>;
+};

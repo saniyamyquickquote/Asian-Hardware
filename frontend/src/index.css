@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { --background: 201 28% 10%; --foreground: 0 0% 96%; --card: 202 22% 15%; --card-foreground: 0 0% 96%; --popover: 202 22% 15%; --popover-foreground: 0 0% 96%; --primary: 42 79% 54%; --primary-foreground: 202 31% 10%; --secondary: 201 22% 20%; --secondary-foreground: 0 0% 96%; --muted: 201 20% 21%; --muted-foreground: 197 12% 61%; --accent: 201 20% 23%; --accent-foreground: 0 0% 96%; --destructive: 0 70% 52%; --destructive-foreground: 0 0% 98%; --border: 200 19% 26%; --input: 200 19% 26%; --ring: 42 79% 54%; --radius: .35rem; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #111c22; color: #f4f5f2; font-family: 'DM Sans', sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+a { color: inherit; text-decoration: none; }
+::selection { background: #e4a72e; color: #10212a; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #132129; }
+::-webkit-scrollbar-thumb { background: #425660; border-radius: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
