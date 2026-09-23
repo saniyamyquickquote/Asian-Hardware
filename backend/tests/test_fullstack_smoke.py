@@ -228,7 +228,9 @@ def test_billing_hold_create_pdf_and_persistence(admin_session, base_url):
     assert created.status_code == 200, created.text
     bill = created.json()
     assert re.match(r"AH/\d{4}-\d{2}/\d{5}", bill["number"])
-    assert bill["cgst"] > 0 and bill["sgst"] > 0 and bill["igst"] == 0
+    # Default includeGst=false → no tax lines
+    assert bill["includeGst"] is False
+    assert bill["cgst"] == 0 and bill["sgst"] == 0 and bill["igst"] == 0
     assert bill["grandTotal"] > 0
 
     fetched = admin_session.get(f"{base_url}/api/billing/{bill['id']}", timeout=30)

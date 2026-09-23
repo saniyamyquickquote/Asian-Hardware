@@ -36,6 +36,16 @@ The original brief requested Next.js 15 + TypeScript + SQLite + NextAuth. The us
 - Customer detail loading guard prevents provisional balance/actions before the account data arrives. Synthetic verification records were cleaned; catalog restored to 506 rows with zero initial stock and next invoice/quote counters reset to 1.
 - Verification: frontend production build succeeds; testing agent executed 12/12 backend regression checks and browser journeys; thermal/A4 invoice and quotation PDFs were rendered and visually inspected; customer loading fix self-checked with browser screenshots.
 
+## Implemented — 2026-09-24 (V2 redesign & optional GST)
+- **Light design system** (`frontend/src/styles.css`, `index.css`): #F8FAFC canvas, white rounded-2xl cards with soft shadow, slate typography (Plus Jakarta Sans display + DM Sans body), royal-blue primary with amber accents, pastel pill badges, 150 ms micro-interactions. Applied to public site, login and every admin page.
+- **Optional GST, off by default.** `includeGst` flag on bills and quotations (backend `SaleInput`/`QuoteInput`, `calculated_lines(..., include_gst)`; frontend `calculateCart(..., includeGst)`). Off → document is **ESTIMATE / CASH MEMO** with no tax lines; on → **TAX INVOICE** with GSTIN, taxable value, CGST/SGST (IGST outside Maharashtra). Prices are GST-exclusive. Single `AH/` series. Quote → bill conversion carries the flag; held bills preserve it.
+- **PDFs** (`backend/pdf_export.py`): 80 mm thermal (Item | Qty | Rate | Amount, total items/pcs, payment/change lines) and A4/A5 (framed, Marathi name rendered via PIL+RAQM, both phone numbers, alternating rows, terms box, authorized signatory) both omit GST rows/GSTIN when the flag is off.
+- **POS rebuild**: category pills with counts, product rows with stock badge + price + `[+] Add`, 44 px qty steppers, editable rate/discount, segmented payment pills (Cash / UPI-GPay / Card / Khata-Credit / Mixed), cash change, Print (F8) / Save & new / WhatsApp / Hold / A4 PDF, quick-add-customer modal. Formatted WhatsApp text via `lib/share.js`.
+- **Mobile counter mode** (<800 px): Products / Current Bill tabs and a floating bottom cart bar (portaled to body).
+- **Quotation builder**: validity dropdown (7/15/30/45/60/90 days), `+ Add custom item` with qty, GST toggle, formatted WhatsApp share, status actions, convert to bill.
+- **Homepage refresh**: framed hero photo with glass badge, amber kicker, Call Now / WhatsApp Us CTAs, white stat cards, light footer with mandatory credits.
+- Verification: testing agent iteration 2 — backend 24/24 pytest (new `tests/test_gst_toggle_flow.py`), all frontend flows pass; floating-bar containing-block bug fixed and re-verified. Database purged again: 506 products, zero stock, counters reset to 1.
+
 ## Prioritized backlog / next tasks
 ### P0 — needed before the owner issues real compliant invoices
 1. Owner/accountant confirms correct **GST rate and HSN** for each product, verifies pricing basis (exclusive/inclusive of GST) and checks the printed invoice against accounting advice. Current imported values do **not** establish legal tax accuracy by themselves.
