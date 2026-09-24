@@ -125,7 +125,11 @@ async def calculated_lines(items, state_code="27", overall_type=None, overall_va
                    "totalTax": float(total_tax), "roundOff": float(money(grand - unrounded)), "grandTotal": float(grand)}
 
 
-async def persist_bill(payload: SaleInput):
+def bill_event(kind, actor, detail="", **extra):
+    return {"id": uid(), "type": kind, "at": now(), "by": actor, "detail": detail, **extra}
+
+
+async def persist_bill(payload: SaleInput, actor="admin"):
     if payload.store not in ("Store 1", "Store 2") or payload.paymentMode not in ("Cash", "UPI", "Card", "Credit", "Mixed"):
         raise HTTPException(400, "Invalid store or payment mode")
     if payload.idempotencyKey:
@@ -164,7 +168,8 @@ async def persist_bill(payload: SaleInput):
            "overallDiscountType": payload.overallDiscountType, "overallDiscountValue": payload.overallDiscountValue,
            "notes": payload.notes, "status": "completed", "items": items, "sourceQuotationId": payload.sourceQuotationId,
            "includeGst": payload.includeGst, "documentType": "TAX INVOICE" if payload.includeGst else "ESTIMATE / CASH MEMO",
-           "idempotencyKey": payload.idempotencyKey, **totals}
+           "idempotencyKey": payload.idempotencyKey, "createdBy": actor, "printCount": 0, "shareCount": 0,
+           "events": [bill_event("created", actor, f"{'Tax invoice' if payload.includeGst else 'Estimate'} saved · {payload.paymentMode}")], **totals}
     await db.bills.insert_one(dict(doc))
     for item in items:
         if item["productId"]:
@@ -203,15 +208,79 @@ async def remove_held(held_id: str, user=Depends(require_admin)):
     return {"ok": True}
 
 
+def ist_bounds(start: str, end: str):
+    bounds = {}
+    for key, value, op in (("start", start, "$gte"), ("end", end, "$lt")):
+        if value:
+            try:
+                day = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=IST)
+            except ValueError:
+                raise HTTPException(400, f"Invalid {key} date, use YYYY-MM-DD")
+            if key == "end":
+                day += timedelta(days=1)
+            bounds[op] = day.astimezone(timezone.utc).isoformat()
+    return bounds
+
+
+def bill_query(q="", start="", end="", paymentMode="", store="", status="", gst=""):
+    query = {}
+    if q.strip():
+        pattern = {"$regex": q.strip(), "$options": "i"}
+        query["$or"] = [{"number": pattern}, {"customerName": pattern}, {"customerPhone": pattern}, {"items.productName": pattern}, {"notes": pattern}]
+    bounds = ist_bounds(start, end)
+    if bounds:
+        query["date"] = bounds
+    for key, value in (("paymentMode", paymentMode), ("store", store), ("status", status)):
+        if value:
+            query[key] = value
+    if gst in ("true", "false"):
+        query["includeGst"] = gst == "true"
+    return query
+
+
+async def bill_summary(query):
+    pipeline = [{"$match": query}, {"$group": {
+        "_id": None, "count": {"$sum": 1},
+        "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+        "cancelled": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
+        "sales": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, "$grandTotal", 0]}},
+        "tax": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, "$totalTax", 0]}},
+        "due": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, "$dueAmount", 0]}},
+        "items": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, {"$size": "$items"}, 0]}}}}]
+    rows = await db.bills.aggregate(pipeline).to_list(1)
+    row = rows[0] if rows else {}
+    return {key: round(float(row.get(key, 0) or 0), 2) for key in ("count", "completed", "cancelled", "sales", "tax", "due", "items")}
+
+
 @router.get("/billing")
-async def list_bills(q: str = "", limit: int = Query(100, ge=1, le=2000), user=Depends(require_admin)):
-    query = {"$or": [{"number": {"$regex": q, "$options": "i"}}, {"customerName": {"$regex": q, "$options": "i"}}]} if q else {}
-    return await db.bills.find(query, {"_id": 0}).sort("date", -1).limit(limit).to_list(limit)
+async def list_bills(q: str = "", start: str = "", end: str = "", paymentMode: str = "", store: str = "", status: str = "", gst: str = "",
+                     page: int = Query(1, ge=1), perPage: int = Query(25, ge=1, le=500), user=Depends(require_admin)):
+    query = bill_query(q, start, end, paymentMode, store, status, gst)
+    total = await db.bills.count_documents(query)
+    items = await db.bills.find(query, {"_id": 0, "events": 0}).sort("date", -1).skip((page - 1) * perPage).limit(perPage).to_list(perPage)
+    return {"items": items, "total": total, "page": page, "perPage": perPage, "pages": max(1, -(-total // perPage)), "summary": await bill_summary(query)}
+
+
+@router.get("/billing/export")
+async def export_bills(q: str = "", start: str = "", end: str = "", paymentMode: str = "", store: str = "", status: str = "", gst: str = "", user=Depends(require_admin)):
+    query = bill_query(q, start, end, paymentMode, store, status, gst)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["Bill No", "Date (IST)", "Type", "Status", "Customer", "Phone", "Customer GSTIN", "Store", "Payment", "Items", "Pieces", "Subtotal", "Discount", "Taxable", "CGST", "SGST", "IGST", "Round Off", "Grand Total", "Received", "Change", "Khata Due", "UPI Ref", "Source Quotation", "Created By", "Cancel Reason", "Notes", "Item Details"])
+    async for bill in db.bills.find(query, {"_id": 0}).sort("date", -1):
+        details = " | ".join(f"{item['productName']} x{item['quantity']} @ {item['unitPrice']:.2f} = {item['totalAmount']:.2f}" for item in bill["items"])
+        writer.writerow([bill["number"], datetime.fromisoformat(bill["date"]).astimezone(IST).strftime("%d/%m/%Y %H:%M"), bill.get("documentType", "TAX INVOICE" if bill.get("includeGst", True) else "ESTIMATE / CASH MEMO"),
+                         bill["status"], bill.get("customerName", ""), bill.get("customerPhone", ""), bill.get("customerGstin", ""), bill.get("store", ""), bill.get("paymentMode", ""),
+                         len(bill["items"]), sum(item["quantity"] for item in bill["items"]), bill.get("subtotal", 0), bill.get("discountAmount", 0), bill.get("taxableAmount", 0),
+                         bill.get("cgst", 0), bill.get("sgst", 0), bill.get("igst", 0), bill.get("roundOff", 0), bill.get("grandTotal", 0), bill.get("amountReceived", 0), bill.get("changeReturned", 0),
+                         bill.get("dueAmount", 0), bill.get("upiTransactionId", ""), bill.get("sourceQuotationNumber", ""), bill.get("createdBy", ""), bill.get("cancelReason", ""), bill.get("notes", ""), details])
+    stamp = datetime.now(IST).strftime("%Y%m%d-%H%M")
+    return Response(content=buffer.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="bills-{stamp}.csv"'})
 
 
 @router.post("/billing")
 async def create_bill(payload: SaleInput, user=Depends(require_admin)):
-    return await persist_bill(payload)
+    return await persist_bill(payload, user.get("username", "admin"))
 
 
 @router.get("/billing/{bill_id}")
@@ -219,6 +288,9 @@ async def get_bill(bill_id: str, user=Depends(require_admin)):
     doc = await db.bills.find_one({"id": bill_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Bill not found")
+    if doc.get("sourceQuotationId") and not doc.get("sourceQuotationNumber"):
+        quote = await db.quotations.find_one({"id": doc["sourceQuotationId"]}, {"_id": 0, "number": 1})
+        doc["sourceQuotationNumber"] = (quote or {}).get("number")
     return doc
 
 
@@ -231,17 +303,42 @@ async def update_bill_status(bill_id: str, payload: dict, user=Depends(require_a
         raise HTTPException(404, "Bill not found")
     if current["status"] == "cancelled" and payload["status"] == "completed":
         raise HTTPException(400, "A cancelled bill cannot be reopened")
-    if current["status"] == "completed" and payload["status"] == "cancelled":
-        for item in current["items"]:
-            if item.get("productId"):
-                await db.products.update_one({"id": item["productId"]}, {"$inc": {"currentStock": item["quantity"]}})
-        if current.get("customerId") and current.get("dueAmount"):
-            await db.customers.update_one({"id": current["customerId"]}, {"$inc": {"balance": -current["dueAmount"]}})
-    return await db.bills.find_one_and_update({"id": bill_id}, {"$set": {"status": payload["status"]}}, return_document=ReturnDocument.AFTER, projection={"_id": 0})
+    if current["status"] == payload["status"]:
+        return current
+    reason = str(payload.get("reason") or "").strip()
+    if payload["status"] == "cancelled" and len(reason) < 3:
+        raise HTTPException(400, "Enter a reason (at least 3 characters) to cancel this bill")
+    actor = user.get("username", "admin")
+    for item in current["items"]:
+        if item.get("productId"):
+            await db.products.update_one({"id": item["productId"]}, {"$inc": {"currentStock": item["quantity"]}, "$set": {"updatedAt": now()}})
+    if current.get("customerId") and current.get("dueAmount"):
+        await db.customers.update_one({"id": current["customerId"]}, {"$inc": {"balance": -current["dueAmount"]}, "$set": {"updatedAt": now()}})
+    update = {"$set": {"status": "cancelled", "cancelReason": reason, "cancelledAt": now(), "cancelledBy": actor},
+              "$push": {"events": bill_event("cancelled", actor, reason)}}
+    return await db.bills.find_one_and_update({"id": bill_id}, update, return_document=ReturnDocument.AFTER, projection={"_id": 0})
+
+
+@router.post("/billing/{bill_id}/events")
+async def add_bill_event(bill_id: str, payload: dict, user=Depends(require_admin)):
+    kind = payload.get("type")
+    if kind not in ("shared", "note"):
+        raise HTTPException(400, "Unsupported event type")
+    detail = str(payload.get("detail") or "").strip()[:300]
+    if kind == "note" and not detail:
+        raise HTTPException(400, "Note cannot be empty")
+    update = {"$push": {"events": bill_event(kind, user.get("username", "admin"), detail or "Shared on WhatsApp", channel=payload.get("channel", "whatsapp"))}}
+    if kind == "shared":
+        update["$inc"] = {"shareCount": 1}
+        update["$set"] = {"lastSharedAt": now()}
+    doc = await db.bills.find_one_and_update({"id": bill_id}, update, return_document=ReturnDocument.AFTER, projection={"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Bill not found")
+    return doc
 
 
 @router.get("/billing/{bill_id}/pdf")
-async def bill_pdf(bill_id: str, format: str = "thermal", user=Depends(require_admin)):
+async def bill_pdf(bill_id: str, format: str = "thermal", action: str = "", user=Depends(require_admin)):
     doc = await db.bills.find_one({"id": bill_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Bill not found")
@@ -249,6 +346,13 @@ async def bill_pdf(bill_id: str, format: str = "thermal", user=Depends(require_a
         raise HTTPException(400, "Invalid print format")
     setting = await db.settings.find_one({"id": "default"}, {"_id": 0})
     content = render_document(doc, setting, "bill", format)
+    if action in ("print", "download"):
+        label = {"thermal": "80mm thermal", "a4": "A4", "a5": "A5"}[format]
+        update = {"$push": {"events": bill_event("printed" if action == "print" else "downloaded", user.get("username", "admin"), f"{label} PDF", format=format)}}
+        if action == "print":
+            update["$inc"] = {"printCount": 1}
+            update["$set"] = {"lastPrintedAt": now()}
+        await db.bills.update_one({"id": bill_id}, update)
     return Response(content=content, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{doc["number"].replace("/", "-")}.pdf"'})
 
 
@@ -330,8 +434,12 @@ async def convert_quote(quote_id: str, payload: dict, user=Depends(require_admin
                                        overallDiscountType=quote.get("overallDiscountType"), overallDiscountValue=quote.get("overallDiscountValue", 0),
                                        paymentMode=payload.get("paymentMode", "Cash"), amountReceived=payload.get("amountReceived"),
                                        includeGst=bool(quote.get("includeGst", True)),
-                                       sourceQuotationId=quote_id, idempotencyKey=f"quote-{quote_id}"))
-    await db.quotations.update_one({"id": quote_id}, {"$set": {"status": "converted", "convertedBillId": bill["id"], "updatedAt": now()}})
+                                       sourceQuotationId=quote_id, idempotencyKey=f"quote-{quote_id}"), user.get("username", "admin"))
+    event = bill_event("converted", user.get("username", "admin"), f"Converted from quotation {quote['number']}", quotationId=quote_id)
+    await db.bills.update_one({"id": bill["id"]}, {"$set": {"sourceQuotationNumber": quote["number"]}, "$push": {"events": event}})
+    bill["sourceQuotationNumber"] = quote["number"]
+    bill.setdefault("events", []).append(event)
+    await db.quotations.update_one({"id": quote_id}, {"$set": {"status": "converted", "convertedBillId": bill["id"], "convertedBillNumber": bill["number"], "updatedAt": now()}})
     return bill
 
 

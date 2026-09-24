@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft, ArrowRight, Download, FileText, MessageCircle, Plus, Printer, Search } from 'lucide-react';
-import { api, currency, dateOnly, downloadPdf, errorText, whatsappText } from '../lib/api';
+import { api, currency, dateOnly, downloadPdf, errorText, printPdf, whatsappText } from '../lib/api';
+import { openPrintWindow } from '../lib/print';
 import { calculateCart, loadProducts, makeKey, newItem } from '../lib/billing';
 import { documentMessage } from '../lib/share';
 import { ProductSearch } from '../components/ProductSearch';
@@ -74,7 +75,13 @@ export default function Quotations() {
   };
   const ensureSaved = async () => saved && !saved.dirty ? saved : save();
   const share = async () => { const doc = await ensureSaved(); if (!doc) return; whatsappText(documentMessage(doc, 'quotation', setting), doc.customerPhone?.replace(/\D/g, '') || ''); };
-  const exportPdf = async print => { const doc = await ensureSaved(); if (!doc) return; try { await downloadPdf(`/quotations/${doc.id}/pdf`, `${doc.number.replaceAll('/', '-')}.pdf`, print); } catch (err) { toast.error(errorText(err)); } };
+  const exportPdf = async print => {
+    const win = print ? openPrintWindow(saved?.number || 'your quotation') : null;
+    const doc = await ensureSaved();
+    if (!doc) { win?.close(); return; }
+    try { if (print) await printPdf(`/quotations/${doc.id}/pdf`, `${doc.number}.pdf`, win, doc.number); else await downloadPdf(`/quotations/${doc.id}/pdf`, `${doc.number}.pdf`); }
+    catch (err) { toast.error(errorText(err)); }
+  };
   const convert = async () => {
     if (!saved || saved.dirty) return toast.error('Save your changes first.');
     if (saved.status !== 'accepted') return toast.error('Mark the quotation accepted first.');
@@ -164,7 +171,7 @@ export default function Quotations() {
               <Button variant="outline" disabled={!saved || saved.dirty || saved.status !== 'accepted'} data-testid="quote-convert-button" onClick={convert}><ArrowRight size={16} /> Convert to bill</Button>
             </div>
             {saved && saved.status !== 'converted' && <div className="quote-status-actions"><span>Status</span>{['draft', 'sent', 'accepted', 'rejected'].map(s => <button type="button" className={saved.status === s ? 'active' : ''} key={s} data-testid={`quote-status-${s}`} onClick={() => save(s)}>{s}</button>)}</div>}
-            {saved?.convertedBillId && <div className="quote-status-actions"><Button variant="outline" data-testid="quote-view-bill-button" onClick={() => downloadPdf(`/billing/${saved.convertedBillId}/pdf?format=a4`, 'converted-bill.pdf', true)}>View converted bill <ArrowRight size={16} /></Button></div>}
+            {saved?.convertedBillId && <div className="quote-status-actions"><Button variant="outline" data-testid="quote-view-bill-button" onClick={() => navigate(`/admin/bills/${saved.convertedBillId}`)}>View converted bill{saved.convertedBillNumber ? ` ${saved.convertedBillNumber}` : ''} <ArrowRight size={16} /></Button></div>}
           </div>
         </div>
       </div>

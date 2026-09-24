@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { CircleCheck, Download, FileClock, FilePlus2, MessageCircle, PauseCircle, Printer, Save, UserPlus, X } from 'lucide-react';
-import { api, currency, dateTime, downloadPdf, errorText, whatsappText } from '../lib/api';
+import { api, currency, dateTime, downloadPdf, errorText, printPdf, whatsappText } from '../lib/api';
+import { openPrintWindow } from '../lib/print';
 import { calculateCart, loadProducts, makeKey, newItem, queueOfflineBill, syncOfflineBills } from '../lib/billing';
 import { documentMessage } from '../lib/share';
 import { ProductSearch } from '../components/ProductSearch';
@@ -17,6 +19,7 @@ const initial = () => { try { return JSON.parse(localStorage.getItem('asian-bill
 const beep = () => { try { const ctx = new (window.AudioContext || window.webkitAudioContext)(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.type = 'sine'; o.frequency.value = 740; g.gain.setValueAtTime(0.035, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.09); o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.09); o.onended = () => ctx.close(); } catch {} };
 
 export default function Billing() {
+  const navigate = useNavigate();
   const draft = useRef(initial()); const searchRef = useRef(null);
   const [products, setProducts] = useState([]); const [customers, setCustomers] = useState([]); const [setting, setSetting] = useState({});
   const [items, setItems] = useState(draft.current.items || []); const [recent, setRecent] = useState([]);
@@ -96,9 +99,11 @@ export default function Billing() {
   };
   const saveNew = async () => { const result = await persist(); if (result) reset(); else if (!navigator.onLine && items.length) reset(); };
   const printBill = async () => {
+    if (!items.length && !saved) return toast.error('Add a product first.');
+    const win = saved || navigator.onLine ? openPrintWindow(saved?.number || 'your bill') : null;
     const result = await persist();
-    if (result) { try { await downloadPdf(`/billing/${result.id}/pdf?format=${printFormat}`, `${result.number.replaceAll('/', '-')}.pdf`, true); } catch (err) { toast.error(errorText(err)); } }
-    else if (!navigator.onLine) { setOfflinePrint(true); setTimeout(() => window.print(), 100); }
+    if (result) { try { await printPdf(`/billing/${result.id}/pdf?format=${printFormat}`, `${result.number}.pdf`, win, result.number); } catch (err) { toast.error(errorText(err)); } }
+    else { win?.close(); if (!navigator.onLine) { setOfflinePrint(true); setTimeout(() => window.print(), 100); } }
   };
   const shareBill = async () => { const result = await persist(); if (!result) return; whatsappText(documentMessage(result, 'bill', setting), chosen?.phone?.replace(/\D/g, '') || ''); };
   const holdBill = async () => { if (!items.length) return toast.error('Add a product first.'); try { await api.post('/billing/held', payload()); toast.success('Bill held — serve the next customer'); reset(); refreshHeld(); } catch (err) { toast.error(errorText(err)); } };
@@ -144,8 +149,9 @@ export default function Billing() {
 
     {lastSaved && !items.length && <div className="success-banner" data-testid="last-bill-success">
       <CircleCheck size={20} /><span>{lastSaved.includeGst ? 'Tax invoice' : 'Bill'} <strong>{lastSaved.number}</strong> saved · {currency(lastSaved.grandTotal)}</span>
-      <button type="button" data-testid="last-bill-print-button" onClick={() => downloadPdf(`/billing/${lastSaved.id}/pdf?format=${printFormat}`, `${lastSaved.number}.pdf`, true)}>Print again</button>
-      <button type="button" data-testid="last-bill-download-button" onClick={() => downloadPdf(`/billing/${lastSaved.id}/pdf?format=a4`, `${lastSaved.number}.pdf`)}>Download A4</button>
+      <button type="button" data-testid="last-bill-print-button" onClick={() => printPdf(`/billing/${lastSaved.id}/pdf?format=${printFormat}`, `${lastSaved.number}.pdf`, null, lastSaved.number).catch(err => toast.error(errorText(err)))}>Print again</button>
+      <button type="button" data-testid="last-bill-download-button" onClick={() => downloadPdf(`/billing/${lastSaved.id}/pdf?format=a4`, `${lastSaved.number}.pdf`).catch(err => toast.error(errorText(err)))}>Download A4</button>
+      <button type="button" data-testid="last-bill-open-button" onClick={() => navigate(`/admin/bills/${lastSaved.id}`)}>View in history</button>
     </div>}
 
     <MobileTabs tab={mobileTab} onChange={setMobileTab} count={items.length} />

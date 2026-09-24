@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import AdminShell from './components/AdminShell';
 import Dashboard from './pages/Dashboard';
 import Billing from './pages/Billing';
+import Bills from './pages/Bills';
 import Quotations from './pages/Quotations';
 import Inventory from './pages/Inventory';
 import Customers from './pages/Customers';
@@ -32,6 +33,8 @@ function App() {
       <Route path="/admin" element={<Protected user={user} loading={loading}><AdminShell user={user} onLogout={signOut} /></Protected>}>
         <Route index element={<Dashboard />} />
         <Route path="billing" element={<Billing />} />
+        <Route path="bills" element={<Bills />} />
+        <Route path="bills/:id" element={<Bills />} />
         <Route path="quotations" element={<Quotations />} />
         <Route path="quotations/:id" element={<Quotations />} />
         <Route path="inventory" element={<Inventory />} />

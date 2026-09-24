@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, ReceiptText, FileText, Boxes, UsersRound, ChartNoAxesCombined, Settings2, LogOut, Menu, Plus, ChevronRight, X } from 'lucide-react';
+import { LayoutDashboard, ReceiptText, History, FileText, Boxes, UsersRound, ChartNoAxesCombined, Settings2, LogOut, Menu, Plus, ChevronRight, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { BrandMark } from './BrandMark';
 
 const nav = [
-  ['Dashboard', '/admin', LayoutDashboard], ['Billing', '/admin/billing', ReceiptText],
+  ['Dashboard', '/admin', LayoutDashboard], ['Billing', '/admin/billing', ReceiptText], ['Bills', '/admin/bills', History],
   ['Quotations', '/admin/quotations', FileText], ['Inventory', '/admin/inventory', Boxes],
   ['Customers', '/admin/customers', UsersRound], ['Reports', '/admin/reports', ChartNoAxesCombined],
   ['Settings', '/admin/settings', Settings2],
@@ -20,7 +20,7 @@ export default function AdminShell({ user, onLogout }) {
       <div className="sidebar-top"><NavLink to="/admin" data-testid="sidebar-brand-link" onClick={() => setOpen(false)}><BrandMark testId="sidebar-brand-lockup" /></NavLink><button className="icon-button mobile-close" aria-label="Close menu" data-testid="close-sidebar-button" onClick={() => setOpen(false)}><X size={20}/></button></div>
       <div className="sidebar-label">WORKSPACE</div>
       <nav className="sidebar-nav" aria-label="Admin navigation">{nav.map(([label, url, Icon]) => <NavLink end={url === '/admin'} to={url} key={label} data-testid={`nav-${label.toLowerCase()}-link`} onClick={() => setOpen(false)} className={({isActive}) => `sidebar-link ${isActive ? 'active' : ''}`}><Icon size={19} strokeWidth={1.8}/><span>{label}</span>{label === 'Billing' && <span className="nav-hotkey">F2</span>}</NavLink>)}</nav>
-      <div className="sidebar-bottom"><span className="sidebar-dot"/> READY FOR BUSINESS <span className="sidebar-version">v1.0</span></div>
+      <div className="sidebar-bottom"><span className="sidebar-dot"/> READY FOR BUSINESS <span className="sidebar-version">v2.1</span></div>
     </aside>
     {open && <button className="sidebar-backdrop" data-testid="sidebar-backdrop-button" aria-label="Close navigation" onClick={() => setOpen(false)} />}
     <div className="admin-main">

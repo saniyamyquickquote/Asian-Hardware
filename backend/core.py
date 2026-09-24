@@ -86,6 +86,9 @@ async def bootstrap():
     await db.products.create_index("sku", unique=True)
     await db.bills.create_index("number", unique=True)
     await db.bills.create_index("idempotencyKey", unique=True, sparse=True)
+    await db.bills.create_index([("date", -1)])
+    await db.bills.create_index([("customerId", 1), ("date", -1)])
+    await db.bills.create_index([("status", 1), ("paymentMode", 1), ("date", -1)])
     await db.quotations.create_index("number", unique=True)
     await db.customers.create_index("phone", unique=True, sparse=True)
     await db.settings.update_one({"id": "default"}, {"$setOnInsert": {
