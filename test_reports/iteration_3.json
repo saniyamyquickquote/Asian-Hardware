@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 3 focused on (A) the Print button bug fix and (B) the new /admin/bills archive page + detail modal, plus responsive check. Backend: 33/33 pytest passed (9 new archive-flow tests + 12 GST-flow + 12 smoke). Frontend: POS print, Bills list print, Dashboard recent-bill print, Bill detail print / A4 print / download, WhatsApp share, note add, cancel with reason, direct-URL modal load, mobile card layout, hamburger nav — all verified. No regression in existing paginated API contract; list endpoint returns {items,total,page,perPage,pages,summary} as documented.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Bill detail modal on 390px", "issues": ["Action button (print/A4/download/whatsapp) height is 42px and bill-detail-close-button is 38x38px; spec asked for ≥44px tap targets. Non-blocking, but tap-friendliness on real phones is marginally below Material/Apple minimums."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_bills_archive_flow.py",
+    "/app/backend/tests/test_gst_toggle_flow.py",
+    "/app/backend/tests/test_fullstack_smoke.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Consider bumping action-button min-height to 44px on the bill-detail modal for mobile (bill-detail-print-button / print-a4 / download / whatsapp are currently 42px; bill-detail-close-button is 38×38).",
+    "Previous iteration's floating-cart-bar containing-block bug (iteration_2) was NOT retested; still open if reported."
+  ],
+  "critical_code_review_comments": [
+    "api_sales.py::update_bill_status restores stock even when transitioning from a status equal to the requested one only via the early-return at line 306; that path is fine, but if the API were ever called concurrently there is a small race where both requests pass the status check and both decrement/increment stock twice. Consider gating with a $set filter (e.g. update where status != 'cancelled') so only one wins.",
+    "api_sales.py list_bills projects out events (good) but the summary aggregate scans without a $match on status upfront — with 1000+ bills the current cond-based summing works but could be slow at scale; consider indexed status and using $facet."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_bills_archive_flow.py (new)"
+  ],
+  "success_rate": {"backend": "100% (33/33 pytest)", "frontend": "~98% (all core flows pass; minor tap-target height nit on mobile)"},
+  "test_credentials": "admin / asian2019 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "New test artefacts created via API/UI: several TEST_LIST_* / TEST_CANCEL_* / TEST_CONV_* / TEST_QT_* bills and one TEST_CUST_* credit customer; the UI cancel-flow test cancelled one live bill (AH/2026-27/003x — most recent Cash bill in list, cancelled with reason 'Wrong customer selected'). Main agent to purge if desired.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Print flow contract verified: clicking any print CTA opens a new popup with title starting 'Print ready ·' and a print-ready-title data-testid + iframe#pdf; the source tab URL never changes. Bills list returns {items,total,page,perPage,pages,summary}. Cancelling requires reason ≥3 chars; second cancel is idempotent (no double stock/khata restore). Convert-quote endpoint now sets sourceQuotationNumber on the bill and pushes a 'converted' event. Existing smoke tests were compatible with new paginated shape because they call /billing/{id}, /billing/held, /billing (POST), etc., not GET /billing (list). No .env changes.",
+  "rca of the issue": "n/a — the original print-in-same-tab bug is confirmed FIXED: window.open('','_blank') is now called synchronously before the save call, and printPdf() writes the PDF into that pre-opened window using fillPrintWindow(); the source page's location object is never touched, so the current tab stays put even when pop-ups are permitted. On blocked pop-ups the code falls back to triggerDownload() + toast (also verified — Bills-page download and POS download buttons trigger page.expect_download() without navigating)."
+}
